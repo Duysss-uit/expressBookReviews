@@ -1,123 +1,99 @@
 const express = require('express');
-const jwt = require('jsonwebtoken');
+const axios = require('axios');
 let books = require("./booksdb.js");
-const regd_users = express.Router();
+let isValid = require("./auth_users.js").isValid;
+let users = require("./auth_users.js").users;
+const public_users = express.Router();
 
-let users = [];
-
-const isValid = (username)=>{ 
-    return !users.some(user => user.username === username);
-}
-
-const authenticatedUser = (username,password)=>{ 
-    let validUsers = users.filter(user => user.username === username && user.password ===password);
-    return (validUsers.length > 0);
-}
-
-//only registered users can login
-regd_users.post("/login", (req, res) => {
+// Register a new user
+public_users.post("/register", (req, res) => {
   const { username, password } = req.body;
   
-  // Validate that both username and password are provided
   if (!username || !password) {
-    return res.status(400).json({ message: "Username and password are required" });
+    return res.status(400).json({ message: "Username and Password are required" });
+  }
+
+  if (!isValid(username)) {
+    return res.status(409).json({ message: "User already exists" });
   }
   
-  // Check if the user is registered and the password is valid
-  if (authenticatedUser(username, password)) {
-    // Generate a JWT token with a secret key and an expiration time
-    const token = jwt.sign({ username }, "accessKey", { expiresIn: '1h' });
-    return res.status(200).json({ message: "User logged in successfully", token });
-  } else {
-    return res.status(401).json({ message: "Invalid username or password" });
-  }
+  users.push({ username, password });
+  return res.status(200).json({ message: "User registered successfully" });
 });
 
-
-// Add a book review
-regd_users.put("/auth/review/:isbn", (req, res) => {
-  const isbn = req.params.isbn;
-  
-  // Extract the token from the Authorization header in the format "Bearer <token>"
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).json({ message: "Unauthorized: Token not provided." });
-  }
-  
-  const token = authHeader.split(" ")[1];
-  let username;
-  
+// Get the book list available in the shop - Using async/await
+public_users.get('/', async function (req, res) {
   try {
-    const decoded = jwt.verify(token, "accessKey");
-    username = decoded.username;
+    // Simulating an async operation to fetch books
+    const bookList = await Promise.resolve(books);
+    return res.status(200).json(bookList);
   } catch (error) {
-    return res.status(401).json({ message: "Unauthorized: Invalid token." });
+    return res.status(500).json({ message: "Error fetching books", error: error.message });
   }
-  
-  // Check if the book exists
-  const book = books[isbn];
-  if (!book) {
-    return res.status(404).json({ message: "Book not found" });
-  }
-  
-  // Extract review from the request body
-  const review = req.body.review;
-  if (!review) {
-    return res.status(400).json({ message: "Please provide a review in the request body" });
-  }
-  
-  // Initialize the reviews property if it doesn't exist
-  if (!book.reviews) {
-    book.reviews = {};
-  }
-  
-  // Add or update the review for the current user
-  book.reviews[username] = review;
-  
-  return res.status(200).json({
-    message: "Review added/updated successfully",
-    reviews: book.reviews
-  });
-});
-regd_users.delete("/auth/review/:isbn", (req, res) => {
-  const isbn = req.params.isbn;
-  
-  // Extract the token from the Authorization header in the format "Bearer <token>"
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).json({ message: "Unauthorized: Token not provided." });
-  }
-  
-  const token = authHeader.split(" ")[1];
-  let username;
-  
-  try {
-    const decoded = jwt.verify(token, "accessKey");
-    username = decoded.username;
-  } catch (error) {
-    return res.status(401).json({ message: "Unauthorized: Invalid token." });
-  }
-  
-  // Check if the book exists
-  const book = books[isbn];
-  if (!book) {
-    return res.status(404).json({ message: "Book not found" });
-  }
-  
-  // Check if the book has reviews and if the user has submitted a review
-  if (!book.reviews || !book.reviews[username]) {
-    return res.status(404).json({ message: "Review not found for the user" });
-  }
-  
-  // Delete the review for the current user
-  delete book.reviews[username];
-  
-  return res.status(200).json({
-    message: "Review deleted successfully",
-    reviews: book.reviews
-  });
 });
 
-module.exports.authenticated = regd_users;
-module.exports.isValid = isValid;
-module.exports.users = users;
+// Get book details based on ISBN - Using async/await
+public_users.get('/isbn/:isbn', async function (req, res) {
+  try {
+    const isbn = req.params.isbn;
+    const book = await Promise.resolve(books[isbn]);
+    if (book) {
+      return res.status(200).json(book);
+    }
+    return res.status(404).json({ message: 'Book not found' });
+  } catch (error) {
+    return res.status(500).json({ message: "Error fetching book details", error: error.message });
+  }
+});
+
+// Get book details based on author - Using async/await
+public_users.get('/author/:author', async function (req, res) {
+  try {
+    const author = req.params.author.toLowerCase();
+    const bookList = await Promise.resolve(books);
+    const results = Object.entries(bookList)
+      .filter(([_, book]) => book.author && book.author.toLowerCase().includes(author))
+      .map(([isbn, book]) => ({ isbn, ...book }));
+
+    if (results.length > 0) {
+      return res.status(200).json(results);
+    }
+    return res.status(404).json({ message: "No books found for the specified author" });
+  } catch (error) {
+    return res.status(500).json({ message: "Error fetching books by author", error: error.message });
+  }
+});
+
+// Get all books based on title - Using async/await
+public_users.get('/title/:title', async function (req, res) {
+  try {
+    const title = req.params.title.toLowerCase();
+    const bookList = await Promise.resolve(books);
+    const results = Object.entries(bookList)
+      .filter(([_, book]) => book.title && book.title.toLowerCase().includes(title))
+      .map(([isbn, book]) => ({ isbn, ...book }));
+
+    if (results.length > 0) {
+      return res.status(200).json(results);
+    }
+    return res.status(404).json({ message: "No books found with the specified title" });
+  } catch (error) {
+    return res.status(500).json({ message: "Error fetching books by title", error: error.message });
+  }
+});
+
+// Get book review - Using async/await
+public_users.get('/review/:isbn', async function (req, res) {
+  try {
+    const isbn = req.params.isbn;
+    const book = await Promise.resolve(books[isbn]);
+    if (book && book.reviews) {
+      return res.status(200).json(book.reviews);
+    }
+    return res.status(404).json({ message: "Book or reviews not found" });
+  } catch (error) {
+    return res.status(500).json({ message: "Error fetching book reviews", error: error.message });
+  }
+});
+
+module.exports.general = public_users;
